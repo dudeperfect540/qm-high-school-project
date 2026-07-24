@@ -29,7 +29,7 @@ for i in range(q_num):
 # 5. Build the Quantum Circuit
 circuit = cirq.Circuit()
 
-# Initialize all system qubits into superposition
+# Initialize all qubits into superposition
 circuit.append(cirq.H.on_each(*all_qubits))
 
 # Grover Iteration Loop
@@ -37,7 +37,7 @@ iterations = int(np.pi * np.sqrt(len(all_qubits)) / 4)
 for _ in range(max(1, iterations)):
     apply_grovers(circuit, edges)
 
-# Measure EVERY register qubit to completely eliminate KeyErrors
+# Measure EVERY qubit
 circuit.append(cirq.measure(qubit, key=qubit.name) for qubit in all_qubits)
 
 # 6. Optimized Simulation
@@ -45,7 +45,7 @@ circuit.append(cirq.measure(qubit, key=qubit.name) for qubit in all_qubits)
 sim = cirq.Simulator()
 result = sim.run(circuit, repetitions=10)
 
-# 7. Safe Parsing Loop
+# 7. Safe Loop
 color_map = {
     (0, 0): "🔴 Red",
     (0, 1): "🔵 Blue",
@@ -60,7 +60,7 @@ for r in range(10):
       q1_name = 'q' + str(2 * i)
       q2_name = 'q' + str(2 * i + 1)
 
-      # Safe dictionary checking prevents crashes if qubits are dynamically pruned
+      # dictionary checking prevents crashes 
       if q1_name in result.measurements and q2_name in result.measurements:
           bit1 = int(result.measurements[q1_name][r][0])
           bit2 = int(result.measurements[q2_name][r][0])
