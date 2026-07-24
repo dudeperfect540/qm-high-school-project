@@ -1,53 +1,58 @@
-import sys
+import numpy as np
 
-sys.setrecursionlimit(2000)
+def memory_bounded_grover_simulation(num_nodes=10, num_colors=4, max_gb=10.0):
+    total_states = num_colors ** num_nodes
+    bytes_per_element = 1
+    max_bytes = int(max_gb * 1024**3)
 
-def appel_haken_9node_validator(outer_nodes=100):
-    # these three lines define 9 nodes of a map, with each having a color, assigned 2 bits- so yeah
-    total_nodes = outer_nodes + 1
-    hub_index = outer_nodes
+    max_elements_in_ram = max_bytes // (bytes_per_element * num_nodes)
+    batch_size = min(total_states, max_elements_in_ram, 50_000_000)
 
-    node_colors = [-1] * total_nodes
-    node_colors[hub_index] = 0
+    print(f" Total State Space: {total_states:,} configurations.")
+    print(f"Memory Limit: {max_gb} GB ({max_bytes:,} bytes available).")
+    print(f"Streaming Batch Size: {batch_size:,} states per chunk.")
 
-    # Defining the 16 graph edges according to Appel-Haken boundary rules
-    color_map = {
-        0: "🔴 Red",
-        1: "🔵 Blue",
-        2: "🟢 Green",
-        3: "🟡 Yellow"
-    }
+    def vectorized_oracle(batch):
+        hub_idx = num_nodes - 1
+        hub_conflict = np.any(batch[:, :hub_idx] == batch[:, hub_idx:hub_idx+1], axis=1)
 
-    # Super fast sampling matrix to check the 4^9 state space (free colab ram requirements :\ )
-    def solve(node_idx):
-        if node_idx == outer_nodes:
-            # Simulates the equal quantum superposition space 
-            return node_colors[outer_nodes - 1] != node_colors[0]
+        perimeter_conflict = np.zeros(batch.shape[0], dtype=bool)
+        for i in range(hub_idx):
+            next_node = (i + 1) % hub_idx
+            perimeter_conflict |= (batch[:, i] == batch[:, next_node])
 
-        # check all 16 edges for color match conflicts
-        for color in [1, 2, 3]:
-            if node_idx > 0 and color == node_colors[node_idx - 1]:
-                continue
+        valid_mask = ~(hub_conflict | perimeter_conflict)
+        return np.where(valid_mask)[0]
 
-            node_colors[node_idx] = color
+    color_names = {0: "🔴 Red", 1: "🔵 Blue", 2: "🟢 Green", 3: "🟡 Yellow"}
+    max_grover_iterations = int(np.sqrt(float(total_states)))
 
-            if solve(node_idx + 1):
-                return True
+    print(f"🚀 Sampling search space (Grover limit bound: ~{max_grover_iterations:,} checks)...")
 
-        # If the map is 100% valid, break and show the user
-        node_colors[node_idx] = -1
-        return False
+    iterations_run = 0
+    while iterations_run < max_grover_iterations:
+        current_chunk_size = min(batch_size, max_grover_iterations - iterations_run)
 
-    if solve(0):
-        print("\n--- Final Color Map Results ---")
-        print(f"👉 CENTRAL HUB NODE {hub_index} : {color_map[node_colors[hub_index]]}")
+        state_batch = np.random.randint(0, num_colors, size=(current_chunk_size, num_nodes), dtype=np.uint8)
+        state_batch[:, -1] = 0
 
-        for i in range(total_nodes - 1):
-            if i < 5 or i >= outer_nodes - 5:
-                print(f" Outer Perimeter Node {i}: {color_map[node_colors[i]]}")
-            elif i == 5:
-                print(" ... [Perimeter nodes 5 through 94 omitted for brevity] ...")
-    else:
-        print("❌ No valid solution exists.")
+        hit_indices = vectorized_oracle(state_batch)
 
-appel_haken_9node_validator(outer_nodes=100)
+        if hit_indices.size > 0:
+            winning_idx = hit_indices[0]
+            winning_state = state_batch[winning_idx]
+
+            print(f"\n [Oracle Hit!] Valid state found after scanning {iterations_run + winning_idx:,} states!")
+            print("--- Final Quantum Register Map Results ---")
+            print(f"👉 CENTRAL HUB NODE {num_nodes - 1} : {color_names[winning_state[-1]]}")
+            for i in range(num_nodes - 1):
+                print(f" Perimeter Node {i}     : {color_names[winning_state[i]]}")
+            return True
+
+        iterations_run += current_chunk_size
+        del state_batch
+
+    print(f"\n❌ Checked {iterations_run:,} states. No valid solution collapsed within this quantum allocation branch.")
+    return False
+
+memory_bounded_grover_simulation(num_nodes=21, num_colors=4, max_gb=12.0)
