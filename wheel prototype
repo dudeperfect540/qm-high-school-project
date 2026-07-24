@@ -1,58 +1,96 @@
+
 import numpy as np
 
-def memory_bounded_grover_simulation(num_nodes=10, num_colors=4, max_gb=10.0):
-    total_states = num_colors ** num_nodes
-    bytes_per_element = 1
-    max_bytes = int(max_gb * 1024**3)
+def grover_simulation(num_nodes):
+    total_states = 4 ** num_nodes
+    qubits =  []
+    for i in range(num_nodes):
+        qubits.append(cirq.GridQubit(0,i))
+        qubits.append(cirq.GridQubit(1,i))
+    circuit = cirq.Circuit()
+    circuit.append(cirq.H.on_each(qubits))
+    ancilla = cirq.NamedQubit("ancilla")
+    iters = int(np.sqrt(total_states))
+    hub = 0
+    encillas = [cirq.NamedQubit(f"edge {beep}") for beep in range(4*(num_nodes - 1))] #stands for edge ancillas
+    circuit.append(cirq.X(ancilla))
+    circuit.append(cirq.H(ancilla))
+    for goat in range(iters):
+      edge = 0
+      #oracle
+      for i in range(1,num_nodes):
+        #hub checks
+        circuit.append(cirq.CNOT(qubits[0],encillas[edge]))
+        circuit.append(cirq.CNOT(qubits[2*i],encillas[edge]))
+        circuit.append(cirq.CNOT(qubits[1],encillas[edge+1]))
+        circuit.append(cirq.CNOT(qubits[2*i+1],encillas[edge+1]))
 
-    max_elements_in_ram = max_bytes // (bytes_per_element * num_nodes)
-    batch_size = min(total_states, max_elements_in_ram, 50_000_000)
+        circuit.append(cirq.X(encillas[edge]))
+        circuit.append(cirq.X(encillas[edge+1]))
 
-    print(f" Total State Space: {total_states:,} configurations.")
-    print(f"Memory Limit: {max_gb} GB ({max_bytes:,} bytes available).")
-    print(f"Streaming Batch Size: {batch_size:,} states per chunk.")
+        edge+=2
+        #outer ring checks
+        if i == (num_nodes - 1):
+          nextbro = 1
+        else:
+          nextbro = i + 1
+        circuit.append(cirq.CNOT(qubits[2*i],encillas[edge]))
+        circuit.append(cirq.CNOT(qubits[2*nextbro],encillas[edge]))
+        circuit.append(cirq.CNOT(qubits[2*i + 1], encillas[edge+1]))
+        circuit.append(cirq.CNOT(qubits[2*nextbro + 1], encillas[edge+1]))
 
-    def vectorized_oracle(batch):
-        hub_idx = num_nodes - 1
-        hub_conflict = np.any(batch[:, :hub_idx] == batch[:, hub_idx:hub_idx+1], axis=1)
+        circuit.append(cirq.X(encillas[edge]))
+        circuit.append(cirq.X(encillas[edge+1]))
 
-        perimeter_conflict = np.zeros(batch.shape[0], dtype=bool)
-        for i in range(hub_idx):
-            next_node = (i + 1) % hub_idx
-            perimeter_conflict |= (batch[:, i] == batch[:, next_node])
+        edge +=2
 
-        valid_mask = ~(hub_conflict | perimeter_conflict)
-        return np.where(valid_mask)[0]
+      circuit.append(cirq.X(ancilla).controlled_by(*encillas, control_values =[1] * len(encillas)))
 
-    color_names = {0: "🔴 Red", 1: "🔵 Blue", 2: "🟢 Green", 3: "🟡 Yellow"}
-    max_grover_iterations = int(np.sqrt(float(total_states)))
 
-    print(f"🚀 Sampling search space (Grover limit bound: ~{max_grover_iterations:,} checks)...")
+      for i in reversed(range(1,num_nodes)):
+        edge -=2
+        if i == (num_nodes - 1):
+          nextbro = 1
+        else:
+          nextbro = i + 1
+        #outer ring undos
+        circuit.append(cirq.X(encillas[edge+1]))
+        circuit.append(cirq.X(encillas[edge]))
+        circuit.append(cirq.CNOT(qubits[2*i],encillas[edge]))
+        circuit.append(cirq.CNOT(qubits[2*nextbro],encillas[edge]))
+        circuit.append(cirq.CNOT(qubits[2*i + 1], encillas[edge+1]))
+        circuit.append(cirq.CNOT(qubits[2*nextbro + 1], encillas[edge+1]))
+        #undo after ancilla records result
+        edge-=2
+        circuit.append(cirq.X(encillas[edge+1]))
+        circuit.append(cirq.X(encillas[edge]))
+        circuit.append(cirq.CNOT(qubits[0],encillas[edge]))
+        circuit.append(cirq.CNOT(qubits[2*i],encillas[edge]))
+        circuit.append(cirq.CNOT(qubits[1],encillas[edge+1]))
+        circuit.append(cirq.CNOT(qubits[2*i+1],encillas[edge+1]))
 
-    iterations_run = 0
-    while iterations_run < max_grover_iterations:
-        current_chunk_size = min(batch_size, max_grover_iterations - iterations_run)
+    #diffuser
+      circuit.append(cirq.H.on_each(qubits))
+      circuit.append(cirq.X.on_each(qubits))
+      circuit.append(cirq.Z(qubits[-1]).controlled_by(*qubits[: -1],control_values = [1]*(len(qubits)-1)))
+      circuit.append(cirq.X.on_each(qubits))
+      circuit.append(cirq.H.on_each(qubits))
 
-        state_batch = np.random.randint(0, num_colors, size=(current_chunk_size, num_nodes), dtype=np.uint8)
-        state_batch[:, -1] = 0
+    circuit.append(cirq.H(ancilla))
+    circuit.append(cirq.X(ancilla))
+    circuit.append(cirq.measure(qubits, key = "meep"))
 
-        hit_indices = vectorized_oracle(state_batch)
+    sim = cirq.Simulator()
+    results = sim.run(circuit, repetitions = 1)
+    listboi = results.measurements["meep"][0]
 
-        if hit_indices.size > 0:
-            winning_idx = hit_indices[0]
-            winning_state = state_batch[winning_idx]
+    colors = {0:"green",1:"cyan", 2:"orange", 3:"yellow"}
+    print("results- cross ur fingers")
+    hub_col = listboi[0] + 2*listboi[1]
+    print("hub is", colors[hub_col])
+    print("--------------------------------------------")
+    for i in range(1,num_nodes):
+      perim = listboi[2*i]+2*listboi[2*i + 1]
+      print("node",i,colors[perim])
 
-            print(f"\n [Oracle Hit!] Valid state found after scanning {iterations_run + winning_idx:,} states!")
-            print("--- Final Quantum Register Map Results ---")
-            print(f"👉 CENTRAL HUB NODE {num_nodes - 1} : {color_names[winning_state[-1]]}")
-            for i in range(num_nodes - 1):
-                print(f" Perimeter Node {i}     : {color_names[winning_state[i]]}")
-            return True
-
-        iterations_run += current_chunk_size
-        del state_batch
-
-    print(f"\n❌ Checked {iterations_run:,} states. No valid solution collapsed within this quantum allocation branch.")
-    return False
-
-memory_bounded_grover_simulation(num_nodes=21, num_colors=4, max_gb=12.0)
+grover_simulation(num_nodes = 3)
