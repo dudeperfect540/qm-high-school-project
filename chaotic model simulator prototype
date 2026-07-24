@@ -1,0 +1,85 @@
+import numpy as np
+# 1. Initialize Graph Variables
+q_num = 6 # 14 qubits total. Safe to scale up to ~20 qubits with this optimization.
+prob = 0.6
+rng = np.random.default_rng()
+
+# 2. Setup Nodes and Keep a Flat List of All Qubits
+nodes = []
+all_qubits = []
+
+for i in range(q_num):
+    qubit_a = cirq.NamedQubit('q' + str(2 * i))
+    qubit_b = cirq.NamedQubit('q' + str((2 * i) + 1))
+    nodes.append(Node(qubit_a, qubit_b))
+    all_qubits.extend([qubit_a, qubit_b])
+
+# 3. Correct Upper-Triangular Matrix Slicing (Fixed Matrix Bug)
+edge_matrix = rng.choice([0, 1], size=(q_num, q_num), p=(1 - prob, prob)).astype(np.int8)
+edge_matrix = np.triu(edge_matrix, k=1)
+print("Graph Edge Matrix:\n", edge_matrix)
+
+# 4. Generate Edge Objects
+edges = []
+for i in range(q_num):
+    for j in range(i+1, q_num):
+        if edge_matrix[i][j] == 1:
+            edges.append(Edge(nodes[i], nodes[j]))
+
+# 5. Build the Quantum Circuit
+circuit = cirq.Circuit()
+
+# Initialize all system qubits into superposition
+circuit.append(cirq.H.on_each(*all_qubits))
+
+# Grover Iteration Loop
+iterations = int(np.pi * np.sqrt(len(all_qubits)) / 4)
+for _ in range(max(1, iterations)):
+    apply_grovers(circuit, edges)
+
+# Measure EVERY register qubit to completely eliminate KeyErrors
+circuit.append(cirq.measure(qubit, key=qubit.name) for qubit in all_qubits)
+
+# 6. Optimized Simulation
+# For scaling, we use a single repetition run
+sim = cirq.Simulator()
+result = sim.run(circuit, repetitions=10)
+
+# 7. Safe Parsing Loop
+color_map = {
+    (0, 0): "🔴 Red",
+    (0, 1): "🔵 Blue",
+    (1, 0): "🟢 Green",
+    (1, 1): "🟡 Yellow"
+}
+
+for r in range(10):
+  print("\n--- Simulation Results ---")
+
+  for i in range(q_num):
+      q1_name = 'q' + str(2 * i)
+      q2_name = 'q' + str(2 * i + 1)
+
+      # Safe dictionary checking prevents crashes if qubits are dynamically pruned
+      if q1_name in result.measurements and q2_name in result.measurements:
+          bit1 = int(result.measurements[q1_name][r][0])
+          bit2 = int(result.measurements[q2_name][r][0])
+          color_1 = color_map.get((bit1, bit2), "⚪ Unknown")
+      else:
+          color_1 = "⚪ Unmeasured"
+
+      colors = {}
+      for j in range(q_num):
+          if edge_matrix[i][j] == 1:
+              target_q1 = 'q' + str(2 * j)
+              target_q2 = 'q' + str(2 * j + 1)
+
+              if target_q1 in result.measurements and target_q2 in result.measurements:
+                  b1 = int(result.measurements[target_q1][0][0])
+                  b2 = int(result.measurements[target_q2][0][0])
+                  colors["Node " + str(j)] = color_map.get((b1, b2), "⚪ Unknown")
+              else:
+                  colors["Node " + str(j)] = "⚪ Unmeasured"
+
+      if colors:
+          print(f"Node {i} ({color_1}) is connected to {colors}")
