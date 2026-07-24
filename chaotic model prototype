@@ -1,1 +1,91 @@
+# # Creates Oracle and Phase Diffuser for any edge configuration (Does not apply superposition or measurement!)
+class Node:
+  def __init__(self, q1 : cirq.NamedQubit, q2 : cirq.NamedQubit):
+    self.qubits = [q1, q2]
 
+  def get_qubit(self, i : int):
+    return self.qubits[i]
+
+class Edge:
+  def __init__(self, n1 : Node, n2 : Node):
+    self.Node1 = n1
+    self.Node2 = n2
+
+  def get_nodes(self):
+    return self.Node1, self.Node2
+
+  # Creates ancilla for edge
+  def compute_ancilla(self, ancilla):
+
+    gates = []
+
+    # Changes second node qubits
+    gates.append(cirq.CX(self.Node1.get_qubit(0), self.Node2.get_qubit(0)))
+    gates.append(cirq.CX(self.Node1.get_qubit(1), self.Node2.get_qubit(1)))
+
+    gates.append(cirq.X(self.Node2.get_qubit(0)))
+    gates.append(cirq.X(self.Node2.get_qubit(1)))
+
+    # Gets inverse of these to append later
+    to_inverse = cirq.inverse(gates)
+
+    # Combine their information into a single ancilla for the edge
+    gates.append(cirq.CCX(self.Node2.get_qubit(0), self.Node2.get_qubit(1), ancilla))
+    gates.append(cirq.X(ancilla))
+
+    # Resets second node qubits
+    gates.append(to_inverse)
+
+    return gates
+
+# Applies phase flip on ancillas
+def apply_phase_flip(circuit, ancillas):
+
+  # Apply Phase flip gate
+  circuit.append(cirq.Z(ancillas[-1]).controlled_by(*ancillas[0 : -1]))
+
+# Gets qubits from a list of edges (ESSENTIAL)
+def get_search_qubits(edges):
+  qubits = []
+  for edge in edges:
+    for node in edge.get_nodes():
+      for i in range (2):
+        qubit = node.get_qubit(i)
+        if qubit not in qubits:
+          qubits.append(qubit)
+  return qubits
+
+# Alters probability using results of oracle gate (just the search qubits are needed)
+def apply_diffusion_operator(circuit, qubits):
+  # Apply Diffusion Operator
+  circuit.append(cirq.H.on_each(*qubits))
+  circuit.append(cirq.X.on_each(*qubits))
+  circuit.append(cirq.Z(qubits[-1]).controlled_by(*qubits[: -1]))
+  circuit.append(cirq.X.on_each(*qubits))
+  circuit.append(cirq.H.on_each(*qubits))
+
+def apply_grovers(circuit, qubits):
+  # Computes ancillas
+  ancillas = []
+  compute_ancilla_list = []
+
+  for i in range(len(edges)):
+    ancilla = cirq.NamedQubit('a' + str(i))
+    gates = edges[i].compute_ancilla(ancilla)
+    circuit.append(gates)
+    ancillas.append(ancilla)
+    compute_ancilla_list.append(gates)
+
+  # Performs phase flip
+  apply_phase_flip(circuit, ancillas)
+
+  # Decomputes ancilla
+  for i in range(len(edges)):
+    circuit.append(cirq.inverse(compute_ancilla_list[i]))
+
+  # Apply diffusion operator
+  qubits = get_search_qubits(edges)
+  apply_diffusion_operator(circuit, qubits)
+
+def binary_labels(num_qubits):
+    return [bin(x)[2:].zfill(num_qubits) for x in range(2 ** num_qubits)]
